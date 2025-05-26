@@ -288,28 +288,27 @@ def my_callback(model, where, timers):
     """
 
     current_time = time.time() - timers["start_time"]
-
+    
     if where == gp.GRB.Callback.MIPSOL:
-        # A new integer feasible solution was found
-        objval = model.cbGet(gp.GRB.Callback.MIPSOL_OBJ)   # Objective value of solution
-        bound = model.cbGet(gp.GRB.Callback.MIPSOL_OBJBND) # Current best bound
-
-        # Update best upper bound and time if improved
+	 # A new integer feasible solution was found
+        objval = model.cbGet(gp.GRB.Callback.MIPSOL_OBJ)
+        bound= model.cbGet(gp.GRB.Callback.MIPSOL_OBJBND)
+        
+	# Update best upper bound and time if improved
         if "last_upper_bound" not in timers or objval < timers["last_upper_bound"]:
             timers["last_upper_bound"] = objval
             timers["best_solution_time"] = current_time
-
         # Update best lower bound and time if improved
         if "last_lower_bound" not in timers or bound > timers["last_lower_bound"]:
             timers["last_lower_bound"] = bound
             timers["last_lower_bound_time"] = current_time
 
-    elif where == gp.GRB.Callback.MIP:
-        # Called periodically during MIP optimization to track progress
-        print("Entrando en MIP callback")
-        bound = model.cbGet(gp.GRB.Callback.MIP_OBJBND)
+        elif where == gp.GRB.Callback.MIP:
+            print("Entrando en MIP callback")
+            bound = model.cbGet(gp.GRB.Callback.MIP_OBJBND)
+				
+            # Update best lower bound and time if improved
+            if "last_lower_bound" not in timers or bound > timers["last_lower_bound"]:
+                timers["last_lower_bound"] = bound
+                timers["last_lower_bound_time"] = current_time
 
-        # Update best lower bound and time if improved
-        if "last_lower_bound" not in timers or bound > timers["last_lower_bound"]:
-            timers["last_lower_bound"] = bound
-            timers["last_lower_bound_time"] = current_time
