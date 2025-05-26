@@ -1,4 +1,4 @@
-"""
+
 # Relative Explanations for CFL 
 
 This repository provides a modular framework for generating relative explanations of solutions to instances of the Competitive Facility Location (CFL) problem.
@@ -32,4 +32,3 @@ from explanations_cfl import (
 
 ## 🛠 Notes
 - Requires a valid [Gurobi](https://www.gurobi.com/) installation and license.
-"""
