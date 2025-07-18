@@ -1,5 +1,5 @@
 import copy
-from .wasserstein_utils import WassersteinDist
+from .wasserstein_utils import WassersteinDistOpt
 from .utils import get_probability_a
 
 def feasible_solution_facility(instance, r, z_sol, alpha, dspace, captured_demand,distF,tipo):
@@ -14,7 +14,7 @@ def feasible_solution_facility(instance, r, z_sol, alpha, dspace, captured_deman
         alpha (float): Threshold factor for captured demand.
         dspace (dict): Facilities that must be fixed (forced to be open or closed).
         captured_demand (float): Total captured demand by initial solution.
-        distF (str): Distance function type, e.g. "euclidean" or "constant" (used later).
+        distF (str): Distance function type, e.g. "euclidean" or "constant" .
         tipo (str): Type of adjustment ('I' or 'II') controlling how facility adjustments are made.
         
     Returns:
@@ -95,7 +95,9 @@ def feasible_solution_facility(instance, r, z_sol, alpha, dspace, captured_deman
     # Calculate new probability distribution
     P_new=get_probability_a(instance2,z)
     # Calculate Wasserstein distance and optimal transport plan between original and new distributions
-    Wupper,pi_values= WassersteinDist(instance,get_probability_a(instance, z_sol),P_new,distF)
+   
+    
+    Wupper,pi_values= WassersteinDistOpt(instance,get_probability_a(instance, z_sol),P_new,distF)
 
 
     # Calculate auxiliary variables w_new and u_new based on new parameters and fixed z
