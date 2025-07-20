@@ -1,7 +1,5 @@
-import gurobipy as gp
-from gurobipy import GRB
 import numpy as np
-
+import ot
 
 def distFn(instance):
     """
@@ -49,68 +47,57 @@ def distFn(instance):
     return dist_squared
 
 
-def WassersteinDist(instance,Prob1,Prob2,distF):
+def WassersteinDistOpt(instance, Prob1, Prob2, distF):
     """
-    Computes the Wasserstein distance between two discrete probability distributions over facilities.
-
-    Formulates and solves a linear program to find the optimal transport plan `pi` minimizing the cost
-    of moving distribution Prob1 to Prob2, where the cost is given by distances between locations.
+    Computes the Wasserstein distance between two discrete probability distributions over facilities,
+    using the POT library (optimal transport) instead of solving an LP with Gurobi.
 
     Args:
-        instance (dict): Dictionary containing the instance data, including:
-            - "D" (list): Candidate facilities.
-            - "E" (list): Competitive facilities.
-            - "N" (list): Demand points.
-        Prob1 (dict): First discrete probability distribution over locations for each demand point.
-                      Format: Prob1[n][c] for demand point n and location c in D ∪ E.
-        Prob2 (dict): Second discrete probability distribution over locations, same format as Prob1.
-        distF (str): Distance function type to use in the objective. Options:
-                     - "euclidean": Use squared Euclidean distances between locations.
-                     - "constant": Use constant cost 1 for any transport.
+        instance (dict): Same structure as in your original function, with "D", "E", "N", etc.
+        Prob1 (dict): Prob1[n][c]
+        Prob2 (dict): Prob2[n][c]
+        distF (str): "euclidean" or "constant"
 
     Returns:
         tuple:
-            - float: The optimal value of the Wasserstein distance.
-            - dict: Optimal transport plan variables `pi`, indexed by (n, c, c_prime).
-
-    Notes:
-        - The transport plan `pi[n, c, c_prime]` satisfies marginal constraints matching Prob1 and Prob2.
-        - Solves the problem using Gurobi MILP solver.
+            - float: total Wasserstein distance
+            - dict: transport plan pi[(n, c, c')]
     """
     D = instance["D"]
     E = instance["E"]
     N = instance["N"]
-    C= D+ E
+    C = D + E
 
-
-   
-    model = gp.Model("Wasserstein Minimization")
-
-    # Variables
-    pi = model.addVars(N, C, C, vtype=GRB.CONTINUOUS, name="pi")
-
-    #Objective
-    if distF=="euclidean":
-        model.setObjective(gp.quicksum(pi[n, c, c_prime] * distFn(instance)[c,c_prime]
-                                    for n in N for c in C for c_prime in C), GRB.MINIMIZE)
-    if distF=="constant":
-        model.setObjective(gp.quicksum(pi[n, c, c_prime] for n in N for c in C for c_prime in C), GRB.MINIMIZE)
-
-    
-    # Restricciones
-    model.addConstrs((gp.quicksum(pi[n, c, c_prime] for c_prime in C) == Prob1[n][c]
-                     for n in N for c in C), name="probability_constraint_1")
-    
-    model.addConstrs((gp.quicksum(pi[n, c, c_prime] for c in C) == Prob2[n][c_prime]
-                      for n in N for c_prime in C), name="probability_constraint_2")
-    model.optimize()
-
-    if model.status == GRB.OPTIMAL:
-        print(f"Optimal objective value: {model.objVal}")
-        pi_values = {(n, c, c_prime): pi[n, c, c_prime].X
-                     for n in N for c in C for c_prime in C}
-        
+    # Construir la matriz de costes
+    if distF == "euclidean":
+        dist_dict = distFn(instance)
+        M = np.array([[dist_dict[(c, c_)] for c_ in C] for c in C])
+    elif distF == "constant":
+        M = np.ones((len(C), len(C)))
     else:
-        print("No optimal solution found.")
+        raise ValueError("distF must be either 'euclidean' or 'constant'")
 
-    return model.objVal, pi_values
+    total_cost = 0.0
+    pi_values = {}
+
+    for n in N:
+        a = np.array([Prob1[n][c] for c in C])
+        b = np.array([Prob2[n][c] for c in C])
+
+        # Normalizing
+        if not np.isclose(a.sum(), 1.0):
+            a = a / a.sum()
+        if not np.isclose(b.sum(), 1.0):
+            b = b / b.sum()
+
+        # Solving optimal transport problem with POT
+        pi_matrix = ot.emd(a, b, M)
+        w_dist = np.sum(pi_matrix * M)
+        total_cost += w_dist
+
+        for i, c in enumerate(C):
+            for j, c_ in enumerate(C):
+                if pi_matrix[i, j] > 1e-12:  
+                    pi_values[(n, c, c_)] = pi_matrix[i, j]
+
+    return total_cost, pi_values

@@ -3,6 +3,11 @@ from gurobipy import GRB
 import time
 from .utils import get_probability_a
 from .wasserstein_utils import distFn
+import ot
+import numpy as np
+import copy
+
+
 
 
 
@@ -45,14 +50,13 @@ def RelativeExplanationsDistGeneric_a(instance, r, z_sol, alpha, dspace, distF):
 
     # Objective
     if distF == "euclidean":
-        model.setObjective(
-            gp.quicksum(pi[n, c, c_prime] * distFn(instance)[c, c_prime]
-                        for n in N for c in C for c_prime in C),
-            GRB.MINIMIZE)
+        dist = distFn(instance)
+        obj=gp.quicksum(pi[n, c, c_prime] * dist[c, c_prime]
+                        for n in N for c in C for c_prime in C)
     elif distF == "constant":
-        model.setObjective(
-            gp.quicksum(pi[n, c, c_prime] for n in N for c in C for c_prime in C),
-            GRB.MINIMIZE)
+        obj=pi.sum()
+    model.setObjective(obj, GRB.MINIMIZE)
+
 
     # Constraints
     model.addConstrs(
@@ -68,23 +72,25 @@ def RelativeExplanationsDistGeneric_a(instance, r, z_sol, alpha, dspace, distF):
          for n in N for e in E), name="probability_constraints3")
 
     model.addConstrs(
-        (gp.quicksum(Pd[n, d] for d in D) + gp.quicksum(Pe[n, e] for e in E) == 1
+        (Pd.sum(n, '*') + Pe.sum(n, '*') == 1
          for n in N), name="prob_equals_1")
+    
+    total_captured = gp.quicksum(q[n] * Pd.sum(n, '*') for n in N)
+    initial_captured = gp.quicksum(q[n] * sum(P0[n][d] for d in D) for n in N)
 
     model.addConstr(
-        gp.quicksum(q[n] * gp.quicksum(Pd[n, d] for d in D) for n in N)
-        >= alpha * gp.quicksum(q[n] * gp.quicksum(P0[n][d] for d in D) for n in N),
+        total_captured >= alpha * initial_captured,
         name="captured_demand_control")
 
     model.addConstrs((Pd[n, d] <= z_aux[n, d] for n in N for d in D), name="selected")
 
     model.addConstrs((Pd[n, d] >= epsi * z_aux[n, d] for n in N for d in D), name="selected2")
 
-    model.addConstr(gp.quicksum(z[d] for d in D) == r, name="z_cardinality")
+    model.addConstr(z.sum() == r, name="z_cardinality")
 
     model.addConstrs(z_aux[n, d] <= z[d] for n in N for d in D)
 
-    model.addConstrs(z[d] <= gp.quicksum(z_aux[n, d] for n in N) for d in D)
+    model.addConstrs((z[d] <= z_aux.sum('*', d) for d in D), name="link_z")
 
     # Desired fixed values for some variables
     for key, value in dspace.items():
@@ -94,7 +100,7 @@ def RelativeExplanationsDistGeneric_a(instance, r, z_sol, alpha, dspace, distF):
     model.setParam('TimeLimit', 3600)
     model.optimize()
 
-    if model.status == gp.GRB.OPTIMAL or model.status == gp.GRB.TIME_LIMIT:
+    if model.status in [GRB.OPTIMAL, GRB.TIME_LIMIT]:
         z_sol_new = {d: z[d].x for d in D}
         Prob_sol = {N[i]: {
             **{D[d]: Pd[N[i], D[d]].x for d in range(len(D))},
@@ -102,13 +108,17 @@ def RelativeExplanationsDistGeneric_a(instance, r, z_sol, alpha, dspace, distF):
         } for i in range(len(N))}
         captured_demand = sum(q[n] * sum(Pd[n, d].x for d in D) for n in N)
         Wdist = model.ObjVal
+        runtime=model.Runtime
+
     else:
         z_sol_new = []
         Prob_sol = []
         captured_demand = []
         Wdist = 0
+        runtime="nan"
 
-    return z_sol_new, Prob_sol, captured_demand, Wdist
+    return z_sol_new, Prob_sol, captured_demand, Wdist, runtime
+
 
 
 
@@ -151,6 +161,9 @@ def RelativeExplanationsMixedFacility(instance,r,z_sol,alpha,dspace,Wbound,initi
    
     # Compute original assignment probabilities given current solution
     P0 = get_probability_a(instance, z_sol)
+
+    #Compute distances
+    dist = distFn(instance)
     
     # Initialize Gurobi model
     model = gp.Model("RelExp")
@@ -181,18 +194,25 @@ def RelativeExplanationsMixedFacility(instance,r,z_sol,alpha,dspace,Wbound,initi
     # Objective: weighted sum of L1 norm of (1 - a) plus normalized Wasserstein distance
     model.setObjective(objvar, GRB.MINIMIZE)
     
+    model.addConstr(
+        objvar == 
+        laml1 * aux_a.sum() + 
+        (lamW / Wbound) * gp.quicksum(pi[n, c, cp] * dist[c, cp] for n in N for c in C for cp in C)
+    )
     
-    model.addConstr(objvar==laml1*gp.quicksum(aux_a[d] for d in D)+lamW/Wbound*gp.quicksum(pi[n, c, c_prime] * distFn(instance)[c,c_prime]
-                                    for n in N for c in C for c_prime in C))
 
     # Demand capture constraint (weighted sum of assignment probabilities)
     model.addConstr(
-        gp.quicksum(q[n] * (gp.quicksum(w[n,d] for d in D)) for n in N)
-        >= alpha * gp.quicksum(q[n] * gp.quicksum(P0[n][d] for d in D) for n in N), name="captured_demand_control")
-    
+        gp.quicksum(q[n] * w.sum(n, '*') for n in N) 
+        >= alpha * gp.quicksum(q[n] * sum(P0[n][d] for d in D) for n in N),
+        name="captured_demand"
+    )
     # Transport plan constraints: marginal probabilities equal P0 and assignment variables
-    model.addConstrs((gp.quicksum(pi[n, c, c_prime] for c_prime in C) == P0[n][c] 
-                     for n in N for c in C), name="probability_constraints1")
+    
+    model.addConstrs(
+        (pi.sum(n, c, '*') == P0[n][c] for n in N for c in C),
+        name="pi_marg1"
+    )
 
 
     model.addConstrs((gp.quicksum(pi[n, c, d_prime] for c in C) == w[n,d_prime]
@@ -202,8 +222,9 @@ def RelativeExplanationsMixedFacility(instance,r,z_sol,alpha,dspace,Wbound,initi
                       for n in N for e in E), name="probability_constraints3")
     # Assignment probabilities sum to at most 1 for each customer
     model.addConstrs(
-            gp.quicksum(w[n,d] for d in D)+gp.quicksum(u[n,e]for e in E)<=1
-            for n in N)
+        (w.sum(n, '*') + u.sum(n, '*') <= 1 for n in N),
+        name="assign_total"
+    )
     
     # Linking constraints between w, a, z, b variables for feasibility
     model.addConstrs (a0[n,d]*a[d]*(w[n,d]-z[d])+b[n]*w[n,d]<=0 
@@ -215,7 +236,7 @@ def RelativeExplanationsMixedFacility(instance,r,z_sol,alpha,dspace,Wbound,initi
     
 
     # Cardinality constraint: exactly r facilities selected
-    model.addConstr(gp.quicksum(z[d] for d in D) == r, name="z_cardinality")
+    model.addConstr(z.sum() == r, name="cardinality")
     
     # Auxiliary variables constraints for L1 norm calculation
     model.addConstrs(aux_a[d]>=(1-a[d]) for d in D)
@@ -238,7 +259,6 @@ def RelativeExplanationsMixedFacility(instance,r,z_sol,alpha,dspace,Wbound,initi
     # Time limit
     model.setParam('TimeLimit', 3600)
     model.optimize(callback=callback_with_data)
-    total_runtime = model.Runtime
     gap=model.MIPGap
     
     # Check for solution availability
@@ -248,7 +268,7 @@ def RelativeExplanationsMixedFacility(instance,r,z_sol,alpha,dspace,Wbound,initi
         w_sol={(n,d): w[n,d].X for n in N for d in D}
         captured_demand=sum(q[n] * sum(w_sol[n, d] for d in D) for n in N)
         objective=model.ObjVal
-        total_time = model.Runtime
+        total_runtime = model.Runtime
         gap=model.MIPGap
         
 
@@ -258,7 +278,7 @@ def RelativeExplanationsMixedFacility(instance,r,z_sol,alpha,dspace,Wbound,initi
         w_sol=[]
         captured_demand=[]
         objective=[]
-        total_time = []
+        total_runtime = []
         gap=[]
 
     return z_sol_new, a_new, w_sol,captured_demand,objective, total_runtime,timers,gap

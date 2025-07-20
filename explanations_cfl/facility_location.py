@@ -42,12 +42,15 @@ def CFL_MILP_h(instance, r ):
     w2 = model.addVars(N, vtype=gp.GRB.CONTINUOUS, lb=0, name="w2")
 
     # Objective function
-    obj = gp.quicksum(q[n] * (gp.quicksum(w[n,d] for d in D)) for n in N)
+    obj = gp.quicksum(q[n] * w.sum(n, '*') for n in N)
     model.setObjective(obj, GRB.MAXIMIZE)
 
     # Constraints
     
-    model.addConstrs((w2[n]+ gp.quicksum(w[n,d] for d in D)<=1 for n in N))
+    model.addConstrs(
+        (w2[n] + w.sum(n, '*') <= 1 for n in N),
+        name="total_demand"
+    )
 
     model.addConstrs(
             a[n,d]*(w[n, d]-z[d])+b[n]*w[n,d] <= 0
@@ -55,7 +58,7 @@ def CFL_MILP_h(instance, r ):
     
     model.addConstrs((w[n, d] - a[n,d]/b[n]*w2[n]<= 0 for n in N for d in D), name="w_upper_bound_1")
     
-    model.addConstr(gp.quicksum(z[d] for d in D) == r, "Budget")
+    model.addConstr(z.sum() == r, name="budget")
 
 
     # Solve the model
